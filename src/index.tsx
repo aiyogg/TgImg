@@ -1,40 +1,53 @@
-import { Form, ActionPanel, Action, showToast } from "@raycast/api";
+import { getSelectedFinderItems, Toast, showToast, showHUD, Clipboard } from "@raycast/api";
+import fs from "fs";
+import path from "path";
+import fetch from "node-fetch";
+import FormData from "form-data";
 
-type Values = {
-  textfield: string;
-  textarea: string;
-  datepicker: Date;
-  checkbox: boolean;
-  dropdown: string;
-  tokeneditor: string[];
-};
+const telegraphHost = "https://telegra.ph";
+const allowFileExtNames = [".png", ".jpg", ".jpeg", ".gif", ".webp"];
 
-export default function Command() {
-  function handleSubmit(values: Values) {
-    console.log(values);
-    showToast({ title: "Submitted form", message: "See logs for submitted values" });
+export default async function main () {
+  let filePaths: string[];
+  try {
+    filePaths = (await getSelectedFinderItems()).map((f) => f.path);
+  } catch (e) {
+    await showToast({
+      style: Toast.Style.Failure,
+      title: "Error",
+      message: e instanceof Error ? e.message : "Could not get the selected Finder items",
+    });
+    return;
   }
+  const toast = await showToast({
+    style: Toast.Style.Animated,
+    title: "Uploading images...",
+  });
 
-  return (
-    <Form
-      actions={
-        <ActionPanel>
-          <Action.SubmitForm onSubmit={handleSubmit} />
-        </ActionPanel>
-      }
-    >
-      <Form.Description text="This form showcases all available form elements." />
-      <Form.TextField id="textfield" title="Text field" placeholder="Enter text" defaultValue="Raycast" />
-      <Form.TextArea id="textarea" title="Text area" placeholder="Enter multi-line text" />
-      <Form.Separator />
-      <Form.DatePicker id="datepicker" title="Date picker" />
-      <Form.Checkbox id="checkbox" title="Checkbox" label="Checkbox Label" storeValue />
-      <Form.Dropdown id="dropdown" title="Dropdown">
-        <Form.Dropdown.Item value="dropdown-item" title="Dropdown Item" />
-      </Form.Dropdown>
-      <Form.TagPicker id="tokeneditor" title="Tag picker">
-        <Form.TagPicker.Item value="tagpicker-item" title="Tag Picker Item" />
-      </Form.TagPicker>
-    </Form>
+  const form = new FormData();
+  filePaths.filter((filePath) => allowFileExtNames.includes(path.extname(filePath).toLowerCase())).forEach(
+    (filePath, index) => {
+      form.append(`file${index}`, fs.createReadStream(filePath));
+    }
   );
+  const result = await fetch(`${telegraphHost}/upload`, {
+    method: 'POST',
+    body: form,
+  }).then(res => res.json());
+
+  if (typeof result === 'object' && result !== null && 'error' in result && result.error) {
+    toast.style = Toast.Style.Failure;
+    toast.title = "Failed to upload images";
+    toast.message = result.error as string;
+    return;
+  }
+  if (Array.isArray(result) && result.length > 0) {
+    console.log(result);
+    const fileURLs = result.reduce((acc, cur) => {
+      acc += `![img](${telegraphHost}${cur.src})\n`;
+      return acc;
+    }, '');
+    Clipboard.copy(fileURLs);
+    return showHUD("🎉 Success and copied");
+  }
 }
